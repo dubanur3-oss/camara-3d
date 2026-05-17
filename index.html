@@ -482,11 +482,24 @@ function initThree() {
   geometry.setDrawRange(0, 0);
      maxPointsDrawn = 0;
 
+  const canvas2d = document.createElement('canvas');
+  canvas2d.width = 32; canvas2d.height = 32;
+  const ctx2d = canvas2d.getContext('2d');
+  const gradient = ctx2d.createRadialGradient(16,16,0, 16,16,16);
+  gradient.addColorStop(0, 'rgba(255,255,255,1)');
+  gradient.addColorStop(0.3, 'rgba(255,255,255,0.9)');
+  gradient.addColorStop(1, 'rgba(0,0,0,0)');
+  ctx2d.fillStyle = gradient;
+  ctx2d.fillRect(0,0,32,32);
+  const glowTex = new THREE.CanvasTexture(canvas2d);
+
   material = new THREE.PointsMaterial({
-    size: POINT_SIZE * 0.01,
+    size: POINT_SIZE * 0.02,
     vertexColors: true,
     transparent: true,
-    opacity: 0.92,
+    opacity: 0.85,
+    map: glowTex,
+    alphaTest: 0.05,
     blending: THREE.AdditiveBlending,
     depthWrite: false,
     sizeAttenuation: true
@@ -541,28 +554,33 @@ function updatePointCloud(depthData, imgData, width, height) {
   const pos  = geometry.attributes.position.array;
   const col  = geometry.attributes.color.array;
   
-  // Aumentar la velocidad de actualización, menos lag
-  const sampleRate = Math.max(1, Math.floor(width * height / 3000)); 
+  const sampleRate = Math.max(1, Math.floor(width * height / 3500)); 
   const aspect = width / height;
 
   for (let i = 0; i < depthData.length; i += sampleRate) {
       const depth = depthData[i]; 
-      if (depth < 0.05) continue; // Fondo lejano ignora
+      
+      // Ignorar puntos de error o bordes lejanos
+      if (depth < 0.05 || depth > 0.98) continue; 
 
       const x = i % width;
       const y = Math.floor(i / width);
+      
       const nx = (x / width  - 0.5) * 2 * aspect;
-      const ny = (y / height - 0.5) * -2;
-      const nz = (depth - 0.5) * DEPTH_SCALE;
+      const ny = -(y / height - 0.5) * 2; // Y inverted for WebGL and real world match
       
-      const v = new THREE.Vector3(nx * 2, ny * 2, nz);
-      // Trasladar ligeramente al frente para que no colisionen con la cámara
-      v.z -= 1.0; 
+      // MiDaS outputs disparity (higher=closer). Convert to pseudo-distance metric.
+      const invDepth = 1.0 - depth;
+      // Escalar la distancia de acuerdo al slider del usuario
+      const distance = (invDepth * DEPTH_SCALE * 3.0) + 1.2; 
       
-      // Aplicar misma rotación del celular para anclar al mundo real
+      // Proyección fustrum real geométrica: x = nx * z, y = ny * z
+      const v = new THREE.Vector3(nx * distance * 0.65, ny * distance * 0.65, -distance);
+      
+      // Acumulación anclada al mundo real rotado por GYROSCOPIO
       v.applyQuaternion(mapQuat);
 
-      const idx = globalIdx % MAX_POINTS; // Búfer circular
+      const idx = globalIdx % MAX_POINTS;
 
       pos[idx*3]   = v.x;
       pos[idx*3+1] = v.y;
@@ -570,16 +588,16 @@ function updatePointCloud(depthData, imgData, width, height) {
 
       depthToColor(depth, _r, _g, _b);
       
+      // Potenciar el brillo del RGB original para dar aspecto LiDAR láser
       if (PALETTE === 'real' && imgData) {
-         col[idx*3]   = imgData[i*4] / 255;
-         col[idx*3+1] = imgData[i*4+1] / 255;
-         col[idx*3+2] = imgData[i*4+2] / 255;
+         col[idx*3]   = Math.min(1.0, (imgData[i*4] / 255) * 1.5);
+         col[idx*3+1] = Math.min(1.0, (imgData[i*4+1] / 255) * 1.5);
+         col[idx*3+2] = Math.min(1.0, (imgData[i*4+2] / 255) * 1.5);
       } else {
          col[idx*3]   = _r[0];
          col[idx*3+1] = _g[0];
          col[idx*3+2] = _b[0];
       }
-
       globalIdx++;
       if (maxPointsDrawn < MAX_POINTS) maxPointsDrawn++;
   }

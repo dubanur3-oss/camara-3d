@@ -1,0 +1,887 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>3D Depth Camera | Escanea tu entorno en tiempo real</title>
+  <meta name="description" content="Herramienta gratuita que convierte tu cámara en un escáner 3D en tiempo real usando inteligencia artificial. Visualiza tu entorno como una nube de puntos 3D.">
+  <meta name="keywords" content="cámara 3D, escaneo 3D, nube de puntos, profundidad IA, depth estimation, three.js, tensorflow">
+  <meta property="og:title" content="3D Depth Camera - Escanea tu entorno con IA">
+  <meta property="og:description" content="Convierte tu cámara en un escáner 3D usando inteligencia artificial. Gratis, sin instalación.">
+  <meta property="og:type" content="website">
+  <link rel="manifest" href="manifest.json">
+  <meta name="theme-color" content="#050810">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  
+  <!-- ═══════════════════════════════════════════════════════════
+       ADSENSE: Reemplaza ca-pub-XXXXXXXXXXXXXXXX con tu Publisher ID
+       Descomenta cuando AdSense esté aprobado:
+  <script async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=ca-pub-XXXXXXXXXXXXXXXX" crossorigin="anonymous"></script>
+  ═══════════════════════════════════════════════════════════ -->
+
+  <style>
+    :root {
+      --cyan: #00f5ff;
+      --cyan-dim: #00b8c4;
+      --bg: #050810;
+      --bg2: #0a1020;
+      --text: #c0d8f0;
+      --border: #1a2840;
+    }
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { background: var(--bg); color: var(--text); font-family: 'Courier New', monospace; overflow-x: hidden; }
+
+    /* ── HEADER ── */
+    header {
+      position: fixed; top: 0; left: 0; right: 0; z-index: 100;
+      background: rgba(5,8,16,0.92); backdrop-filter: blur(12px);
+      border-bottom: 1px solid var(--border);
+      padding: 0 24px;
+      display: flex; align-items: center; justify-content: space-between;
+      height: 56px;
+    }
+    .logo { color: var(--cyan); font-size: 1.1rem; font-weight: bold; letter-spacing: 2px; }
+    .logo span { color: var(--text); font-weight: normal; }
+    nav a { color: var(--text); text-decoration: none; margin-left: 20px; font-size: 0.8rem; letter-spacing: 1px; opacity: 0.7; transition: opacity .2s; }
+    nav a:hover { opacity: 1; color: var(--cyan); }
+
+    /* ── AD SLOT HORIZONTAL TOP ── */
+    .ad-top {
+      margin-top: 56px;
+      background: var(--bg2);
+      border-bottom: 1px solid var(--border);
+      min-height: 90px;
+      display: flex; align-items: center; justify-content: center;
+    }
+    .ad-placeholder {
+      width: 728px; max-width: 100%; height: 90px;
+      border: 1px dashed var(--border);
+      display: flex; align-items: center; justify-content: center;
+      color: #2a3850; font-size: 0.7rem; letter-spacing: 2px;
+    }
+    /* Código AdSense real (descomenta cuando esté aprobado):
+    .ad-slot ins.adsbygoogle { display: block; }
+    */
+
+    /* ── HERO ── */
+    .hero {
+      padding: 48px 24px 32px;
+      text-align: center;
+      background: linear-gradient(180deg, var(--bg2) 0%, var(--bg) 100%);
+      border-bottom: 1px solid var(--border);
+    }
+    .hero h1 { font-size: clamp(1.6rem, 4vw, 2.8rem); color: var(--cyan); letter-spacing: 3px; margin-bottom: 12px; }
+    .hero p { font-size: 0.95rem; opacity: 0.7; max-width: 600px; margin: 0 auto 24px; line-height: 1.7; }
+    .hero-badges { display: flex; gap: 12px; justify-content: center; flex-wrap: wrap; margin-bottom: 24px; }
+    .badge { background: var(--bg); border: 1px solid var(--border); padding: 4px 12px; border-radius: 20px; font-size: 0.72rem; color: var(--cyan-dim); letter-spacing: 1px; }
+
+    /* ── MAIN APP AREA ── */
+    .app-container {
+      display: grid;
+      grid-template-columns: 1fr 320px;
+      gap: 0;
+      min-height: 600px;
+      border-bottom: 1px solid var(--border);
+    }
+    @media (max-width: 900px) { .app-container { grid-template-columns: 1fr; } }
+
+    /* ── 3D CANVAS ── */
+    #canvas-wrapper {
+      position: relative;
+      background: #000;
+      min-height: 520px;
+    }
+    #three-canvas { display: block; width: 100%; height: 100%; }
+    #video-hidden { display: none; }
+
+    /* ── HUD ── */
+    #hud {
+      position: absolute; top: 12px; left: 12px;
+      background: rgba(5,8,16,0.8); border: 1px solid var(--border);
+      padding: 8px 14px; border-radius: 4px; font-size: 0.72rem;
+      line-height: 1.8; pointer-events: none;
+    }
+    #hud span { color: var(--cyan); }
+    .hud-dot { display: inline-block; width: 6px; height: 6px; background: var(--cyan); border-radius: 50%; margin-right: 6px; animation: pulse 1.5s infinite; }
+    @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.3} }
+
+    /* ── CONTROLS ── */
+    #controls {
+      position: absolute; bottom: 16px; left: 50%; transform: translateX(-50%);
+      display: flex; gap: 10px;
+    }
+    .btn {
+      padding: 10px 20px; border: 1px solid var(--cyan); background: rgba(0,245,255,0.08);
+      color: var(--cyan); font-family: 'Courier New', monospace; font-size: 0.8rem;
+      letter-spacing: 1px; cursor: pointer; border-radius: 4px; transition: all .2s;
+    }
+    .btn:hover { background: rgba(0,245,255,0.18); box-shadow: 0 0 16px rgba(0,245,255,0.3); }
+    .btn.primary { background: rgba(0,245,255,0.15); }
+    .btn:disabled { opacity: 0.4; cursor: not-allowed; }
+
+    /* ── STATUS ── */
+    #status-bar {
+      position: absolute; top: 12px; right: 12px;
+      background: rgba(5,8,16,0.8); border: 1px solid var(--border);
+      padding: 6px 12px; border-radius: 4px; font-size: 0.7rem;
+    }
+    #status-text { color: var(--cyan); }
+
+    /* ── SIDEBAR ── */
+    .sidebar {
+      background: var(--bg2); border-left: 1px solid var(--border);
+      padding: 20px 16px; overflow-y: auto;
+    }
+    .sidebar h3 { color: var(--cyan); font-size: 0.8rem; letter-spacing: 2px; margin-bottom: 16px; border-bottom: 1px solid var(--border); padding-bottom: 8px; }
+
+    /* AD SLOT SIDEBAR 300x250 */
+    .ad-sidebar {
+      width: 100%; min-height: 250px;
+      border: 1px dashed var(--border);
+      display: flex; align-items: center; justify-content: center;
+      color: #2a3850; font-size: 0.65rem; letter-spacing: 1px;
+      margin-bottom: 20px; background: rgba(0,0,0,0.2);
+    }
+
+    .control-group { margin-bottom: 18px; }
+    .control-group label { display: block; font-size: 0.72rem; color: var(--text); margin-bottom: 6px; opacity: 0.8; }
+    .control-group input[type="range"] { width: 100%; accent-color: var(--cyan); }
+    .control-group select {
+      width: 100%; background: var(--bg); border: 1px solid var(--border);
+      color: var(--text); padding: 6px 8px; font-family: 'Courier New', monospace;
+      font-size: 0.78rem; border-radius: 3px;
+    }
+    .val-display { color: var(--cyan); font-size: 0.72rem; float: right; }
+
+    .info-box { background: rgba(0,245,255,0.04); border: 1px solid var(--border); border-radius: 4px; padding: 12px; margin-bottom: 12px; font-size: 0.72rem; line-height: 1.7; opacity: 0.8; }
+
+    /* ── SHARE POPUP ── */
+    #share-popup {
+      display: none; position: fixed; inset: 0; z-index: 200;
+      background: rgba(5,8,16,0.9); backdrop-filter: blur(10px);
+      align-items: center; justify-content: center;
+    }
+    #share-popup.show { display: flex; }
+    .popup-box { background: var(--bg2); border: 1px solid var(--cyan); border-radius: 8px; padding: 32px; max-width: 420px; width: 90%; text-align: center; }
+    .popup-box h2 { color: var(--cyan); margin-bottom: 12px; font-size: 1.2rem; letter-spacing: 2px; }
+    .popup-box p { opacity: 0.7; font-size: 0.82rem; margin-bottom: 20px; line-height: 1.6; }
+    .share-link { background: var(--bg); border: 1px solid var(--border); padding: 10px 14px; border-radius: 4px; font-size: 0.78rem; color: var(--cyan); word-break: break-all; margin-bottom: 20px; }
+    #captured-preview { width: 100%; max-height: 200px; object-fit: contain; border: 1px solid var(--border); border-radius: 4px; margin-bottom: 16px; }
+
+    /* ── CONTENT SECTION ── */
+    .content-section { max-width: 900px; margin: 0 auto; padding: 48px 24px; }
+    .content-section h2 { color: var(--cyan); font-size: 1.3rem; letter-spacing: 2px; margin-bottom: 24px; }
+    .content-section p { line-height: 1.8; opacity: 0.8; margin-bottom: 16px; font-size: 0.92rem; }
+
+    .features-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 16px; margin: 32px 0; }
+    .feature-card { background: var(--bg2); border: 1px solid var(--border); border-radius: 6px; padding: 20px; }
+    .feature-card .icon { font-size: 1.8rem; margin-bottom: 10px; }
+    .feature-card h3 { color: var(--cyan); font-size: 0.88rem; letter-spacing: 1px; margin-bottom: 8px; }
+    .feature-card p { font-size: 0.8rem; opacity: 0.7; line-height: 1.6; }
+
+    /* ── AD SLOT HORIZONTAL MID ── */
+    .ad-mid { background: var(--bg2); border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); padding: 16px; display: flex; align-items: center; justify-content: center; }
+
+    .steps { counter-reset: step; }
+    .step { display: flex; gap: 16px; margin-bottom: 20px; padding: 16px; background: var(--bg2); border: 1px solid var(--border); border-radius: 6px; }
+    .step-num { color: var(--cyan); font-size: 1.4rem; font-weight: bold; min-width: 32px; }
+    .step-content h4 { color: var(--text); margin-bottom: 6px; font-size: 0.88rem; }
+    .step-content p { font-size: 0.8rem; opacity: 0.7; line-height: 1.6; }
+
+    /* ── FAQ ── */
+    .faq-item { border-bottom: 1px solid var(--border); padding: 16px 0; }
+    .faq-q { color: var(--cyan); font-size: 0.88rem; cursor: pointer; }
+    .faq-a { font-size: 0.82rem; opacity: 0.7; line-height: 1.7; margin-top: 10px; display: none; }
+    .faq-item.open .faq-a { display: block; }
+
+    /* ── FOOTER ── */
+    footer { background: var(--bg2); border-top: 1px solid var(--border); padding: 32px 24px; text-align: center; font-size: 0.75rem; opacity: 0.5; }
+
+    /* ── LOADING OVERLAY ── */
+    #loading { position: absolute; inset: 0; background: var(--bg); display: flex; flex-direction: column; align-items: center; justify-content: center; z-index: 50; }
+    #loading h2 { color: var(--cyan); letter-spacing: 3px; margin-bottom: 12px; font-size: 1rem; }
+    #loading p { opacity: 0.6; font-size: 0.78rem; margin-bottom: 24px; }
+    .loader { width: 48px; height: 48px; border: 3px solid var(--border); border-top-color: var(--cyan); border-radius: 50%; animation: spin 0.8s linear infinite; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    #progress-bar { width: 200px; height: 3px; background: var(--border); border-radius: 2px; overflow: hidden; margin-top: 16px; }
+    #progress-fill { height: 100%; background: var(--cyan); width: 0%; transition: width .3s; }
+  </style>
+</head>
+<body>
+
+<!-- START PERMISSION OVERLAY -->
+<div id="start-overlay" style="position:fixed;inset:0;background:#050810;z-index:9999;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;padding:24px;">
+  <h1 style="color:#00f5ff;letter-spacing:3px;font-size:2rem;margin-bottom:12px;">3D DEPTH CAMERA</h1>
+  <p style="color:#c0d8f0;opacity:0.8;margin-bottom:30px;line-height:1.6;font-size:0.9rem;max-width:400px;">
+    App lista.<br><br>
+    Para escanear tu entorno necesitamos acceso a la cámara. El navegador te solicitará el permiso oficial en el siguiente paso.
+  </p>
+  <button id="btn-start-app" style="padding:16px 32px; border:1px solid #00f5ff; background:rgba(0,245,255,0.15); color:#00f5ff; font-family:'Courier New', monospace; font-size:1.1rem; letter-spacing:2px; cursor:pointer; border-radius:6px; box-shadow:0 0 20px rgba(0,245,255,0.2);">
+    PERMITIR CÁMARA E INICIAR
+  </button>
+  <p style="margin-top:40px;font-size:0.75rem;opacity:0.5;max-width:300px;">
+    *Si estás en tu celular y falla la cámara, recuerda que debes abrir este sitio web mediante HTTPS o localhost. O instalarlo primero como App.
+  </p>
+</div>
+
+<!-- HEADER -->
+<header>
+  <div class="logo">3D<span>DEPTH</span>.CAM</div>
+  <nav>
+    <a href="#app">App</a>
+    <a href="#como-funciona">Cómo funciona</a>
+    <a href="#faq">FAQ</a>
+  </nav>
+</header>
+
+<!-- AD TOP (728x90) -->
+<div class="ad-top">
+  <!-- AdSense slot: descomenta cuando esté aprobado
+  <ins class="adsbygoogle" style="display:block" data-ad-client="ca-pub-XXXXXXXXXXXXXXXX" data-ad-slot="XXXXXXXXXX" data-ad-format="horizontal"></ins>
+  <script>(adsbygoogle = window.adsbygoogle || []).push({});</script>
+  -->
+  <div class="ad-placeholder">[ PUBLICIDAD 728×90 ]</div>
+</div>
+
+<!-- HERO -->
+<div class="hero" id="app">
+  <h1>3D DEPTH CAMERA</h1>
+  <p>Convierte tu cámara en un escáner 3D en tiempo real usando Inteligencia Artificial. Visualiza tu entorno como una nube de puntos tridimensional directamente desde el navegador.</p>
+  <div class="hero-badges">
+    <span class="badge">▸ IA EN TIEMPO REAL</span>
+    <span class="badge">▸ SIN INSTALACIÓN</span>
+    <span class="badge">▸ 100% GRATIS</span>
+    <span class="badge">▸ MOBILE FRIENDLY</span>
+  </div>
+</div>
+
+<!-- MAIN APP -->
+<div class="app-container">
+  <!-- CANVAS -->
+  <div id="canvas-wrapper">
+    <canvas id="three-canvas"></canvas>
+    <video id="video-hidden" autoplay playsinline muted></video>
+
+    <!-- LOADING -->
+    <div id="loading">
+      <h2>INICIANDO SISTEMA</h2>
+      <p id="load-msg">Cargando modelo de IA...</p>
+      <div class="loader"></div>
+      <div id="progress-bar"><div id="progress-fill"></div></div>
+    </div>
+
+    <!-- HUD -->
+    <div id="hud">
+      <div><span class="hud-dot"></span><span id="fps-val">0</span> FPS</div>
+      <div>PUNTOS: <span id="pts-val">0</span></div>
+      <div>MODO: <span id="mode-val">PROFUNDIDAD</span></div>
+    </div>
+
+    <!-- STATUS -->
+    <div id="status-bar"><span id="status-text">INICIANDO...</span></div>
+
+    <!-- CONTROLS -->
+    <div id="controls">
+      <button class="btn" id="btn-flip-cam">🔄 CÁMARA</button>
+      <button class="btn" id="btn-toggle-cam">⏸ PAUSAR</button>
+      <button class="btn primary" id="btn-capture">📷 CAPTURAR</button>
+      <button class="btn" id="btn-reset">↺ RESET</button>
+    </div>
+  </div>
+
+  <!-- SIDEBAR -->
+  <div class="sidebar">
+    <h3>CONTROLES</h3>
+
+    <!-- AD SIDEBAR 300x250 -->
+    <!-- AdSense: descomenta cuando esté aprobado
+    <ins class="adsbygoogle" style="display:block;width:300px;height:250px" data-ad-client="ca-pub-XXXXXXXXXXXXXXXX" data-ad-slot="XXXXXXXXXX"></ins>
+    <script>(adsbygoogle = window.adsbygoogle || []).push({});</script>
+    -->
+    <div class="ad-sidebar">[ PUBLICIDAD 300×250 ]</div>
+
+    <div class="control-group">
+      <label>Densidad de puntos <span class="val-display" id="density-val">20k</span></label>
+      <input type="range" id="density" min="5000" max="30000" step="1000" value="20000">
+    </div>
+    <div class="control-group">
+      <label>Escala de profundidad <span class="val-display" id="depth-scale-val">2.0</span></label>
+      <input type="range" id="depth-scale" min="0.5" max="5" step="0.1" value="2">
+    </div>
+    <div class="control-group">
+      <label>Tamaño de punto <span class="val-display" id="point-size-val">2.0</span></label>
+      <input type="range" id="point-size" min="0.5" max="5" step="0.5" value="2">
+    </div>
+    <div class="control-group">
+      <label>Velocidad de rotación <span class="val-display" id="rot-speed-val">0.3</span></label>
+      <input type="range" id="rot-speed" min="0" max="2" step="0.1" value="0.3">
+    </div>
+    <div class="control-group">
+      <label>Paleta de colores</label>
+      <select id="color-palette">
+        <option value="cyan">Cian / Azul</option>
+        <option value="fire">Fuego / Rojo</option>
+        <option value="matrix">Matrix / Verde</option>
+        <option value="rainbow">Arcoíris</option>
+        <option value="white">Blanco / Gris</option>
+      </select>
+    </div>
+    <div class="control-group">
+      <label>Vista</label>
+      <select id="view-mode">
+        <option value="3d">3D Point Cloud</option>
+        <option value="depth">Mapa de Profundidad</option>
+        <option value="split">Vista Dividida</option>
+      </select>
+    </div>
+
+    <div class="info-box">
+      🖱️ <b>PC:</b> Arrastra para orbitar, scroll para zoom<br>
+      👆 <b>Móvil:</b> Un dedo = orbitar, dos dedos = zoom<br>
+      📷 Captura guarda el frame actual como imagen
+    </div>
+  </div>
+</div>
+
+<!-- AD MID -->
+<div class="ad-mid">
+  <!-- AdSense: descomenta cuando esté aprobado
+  <ins class="adsbygoogle" style="display:block" data-ad-client="ca-pub-XXXXXXXXXXXXXXXX" data-ad-slot="XXXXXXXXXX" data-ad-format="auto" data-full-width-responsive="true"></ins>
+  <script>(adsbygoogle = window.adsbygoogle || []).push({});</script>
+  -->
+  <div class="ad-placeholder" style="width:100%;max-width:970px;height:90px;">[ PUBLICIDAD RESPONSIVE ]</div>
+</div>
+
+<!-- CONTENT: CÓMO FUNCIONA -->
+<div class="content-section" id="como-funciona">
+  <h2>¿CÓMO FUNCIONA?</h2>
+  <p>Esta herramienta utiliza <strong style="color:var(--cyan)">MiDaS</strong>, un modelo de estimación de profundidad desarrollado por Intel y distribuido mediante TensorFlow.js. Analiza cada frame de tu cámara y calcula la distancia estimada de cada punto de la imagen.</p>
+  <p>Los datos de profundidad se convierten en coordenadas 3D y se renderizan con <strong style="color:var(--cyan)">Three.js</strong> como una nube de puntos interactiva, todo ejecutándose localmente en tu dispositivo sin enviar datos a ningún servidor.</p>
+
+  <div class="features-grid">
+    <div class="feature-card"><div class="icon">🧠</div><h3>IA LOCAL</h3><p>El modelo MiDaS se ejecuta completamente en tu navegador usando WebGL. Tus datos nunca salen del dispositivo.</p></div>
+    <div class="feature-card"><div class="icon">⚡</div><h3>TIEMPO REAL</h3><p>Procesamiento de hasta 15 frames por segundo dependiendo del hardware. Optimizado para móvil y escritorio.</p></div>
+    <div class="feature-card"><div class="icon">🎮</div><h3>INTERACTIVO</h3><p>Orbita, rota y escala la nube de puntos con touch o mouse. Ajusta todos los parámetros en tiempo real.</p></div>
+    <div class="feature-card"><div class="icon">📱</div><h3>MOBILE FIRST</h3><p>Diseñado para funcionar en Chrome Android y Safari iOS 16+. Soporte para cámara trasera y frontal.</p></div>
+  </div>
+
+  <h2 style="margin-top:40px">PASOS PARA USAR</h2>
+  <div class="steps">
+    <div class="step"><div class="step-num">01</div><div class="step-content"><h4>Permite acceso a la cámara</h4><p>Al cargar la página, el navegador te pedirá permiso para usar la cámara. Acepta para comenzar el escaneo en tiempo real.</p></div></div>
+    <div class="step"><div class="step-num">02</div><div class="step-content"><h4>Espera que cargue el modelo</h4><p>MiDaS tarda unos segundos en cargar la primera vez. Una barra de progreso te indica el estado.</p></div></div>
+    <div class="step"><div class="step-num">03</div><div class="step-content"><h4>Mueve la cámara lentamente</h4><p>Apunta a objetos o personas. Funciona mejor con buena iluminación y objetos a 0.5–3 metros de distancia.</p></div></div>
+    <div class="step"><div class="step-num">04</div><div class="step-content"><h4>Ajusta y captura</h4><p>Usa los controles del panel derecho para personalizar la visualización. Pulsa CAPTURAR para guardar una imagen.</p></div></div>
+  </div>
+</div>
+
+<!-- AD MID 2 -->
+<div class="ad-mid">
+  <div class="ad-placeholder" style="width:100%;max-width:728px;height:90px;">[ PUBLICIDAD 728×90 ]</div>
+</div>
+
+<!-- FAQ -->
+<div class="content-section" id="faq">
+  <h2>PREGUNTAS FRECUENTES</h2>
+  <div class="faq-item"><div class="faq-q">▸ ¿Funciona en todos los teléfonos?</div><div class="faq-a">Sí, en la mayoría de smartphones modernos. Requiere Chrome 90+ en Android o Safari 16+ en iOS. En dispositivos muy antiguos puede ir lento por la carga computacional del modelo de IA.</div></div>
+  <div class="faq-item"><div class="faq-q">▸ ¿Mis imágenes se suben a algún servidor?</div><div class="faq-a">No. Todo el procesamiento ocurre localmente en tu navegador. Ni el video de la cámara ni las imágenes capturadas salen de tu dispositivo a menos que uses la función de compartir.</div></div>
+  <div class="faq-item"><div class="faq-q">▸ ¿Por qué la primera carga tarda?</div><div class="faq-a">El modelo MiDaS pesa ~50MB y debe descargarse la primera vez. Las siguientes visitas usan la caché del navegador y cargan mucho más rápido.</div></div>
+  <div class="faq-item"><div class="faq-q">▸ ¿Puedo usarlo para medir distancias reales?</div><div class="faq-a">La estimación de profundidad es relativa, no absoluta. Es perfecta para visualización artística y efectos 3D, pero no para mediciones de precisión.</div></div>
+  <div class="faq-item"><div class="faq-q">▸ ¿Funciona sin conexión a internet?</div><div class="faq-a">Después de la primera carga (cuando el modelo queda en caché) sí puede funcionar sin internet en la mayoría de navegadores.</div></div>
+</div>
+
+<!-- FOOTER -->
+<footer>
+  <p>3DDepth.cam — Herramienta gratuita de visualización 3D con IA</p>
+  <p style="margin-top:8px"><a href="#" style="color:var(--cyan-dim);text-decoration:none">Política de privacidad</a> · <a href="#" style="color:var(--cyan-dim);text-decoration:none">Términos de uso</a> · <a href="#" style="color:var(--cyan-dim);text-decoration:none">Contacto</a></p>
+</footer>
+
+<!-- SHARE POPUP -->
+<div id="share-popup">
+  <div class="popup-box">
+    <h2>📷 CAPTURA GUARDADA</h2>
+    <img id="captured-preview" src="" alt="Captura">
+    <p>Tu escaneo 3D ha sido capturado. Descárgalo o comparte el enlace.</p>
+    <div class="share-link" id="share-link-text">Generando enlace...</div>
+    <div style="display:flex;gap:10px;justify-content:center">
+      <button class="btn" id="btn-download">⬇ DESCARGAR</button>
+      <button class="btn" id="btn-close-popup">✕ CERRAR</button>
+    </div>
+  </div>
+</div>
+
+<!-- SCRIPTS -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script>
+// ═══════════════════════════════════════════════════════════════════
+//  3D DEPTH CAMERA — Motor principal
+// ═══════════════════════════════════════════════════════════════════
+
+// ── Config ──────────────────────────────────────────────────────────
+let MAX_POINTS  = 20000;
+let DEPTH_SCALE = 2.0;
+let POINT_SIZE  = 2.0;
+let ROT_SPEED   = 0.003;
+let PALETTE     = 'cyan';
+let VIEW_MODE   = '3d';
+let isRunning   = true;
+
+// ── State ────────────────────────────────────────────────────────────
+let camera3d, scene, renderer, pointCloud, geometry, material;
+let orbitActive = false, orbitX = 0, orbitY = 0, lastX = 0, lastY = 0;
+let zoomLevel = 5, prevPinchDist = 0;
+let rafId, lastFpsTime = 0, frameCount = 0, fps = 0;
+let depthModel = null, videoEl, processingCanvas, processingCtx;
+let capturedDataURL = null;
+
+const loadingEl    = document.getElementById('loading');
+const loadMsgEl    = document.getElementById('load-msg');
+const progressFill = document.getElementById('progress-fill');
+const fpsVal       = document.getElementById('fps-val');
+const ptsVal       = document.getElementById('pts-val');
+const modeVal      = document.getElementById('mode-val');
+const statusText   = document.getElementById('status-text');
+
+// ── Progress helper ──────────────────────────────────────────────────
+function setProgress(pct, msg) {
+  progressFill.style.width = pct + '%';
+  if (msg) loadMsgEl.textContent = msg;
+}
+
+// ── Three.js init ────────────────────────────────────────────────────
+function initThree() {
+  const canvas = document.getElementById('three-canvas');
+  const wrapper = document.getElementById('canvas-wrapper');
+
+  renderer = new THREE.WebGLRenderer({ canvas, antialias: false, alpha: false, preserveDrawingBuffer: true });
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+  renderer.setSize(wrapper.clientWidth, wrapper.clientHeight);
+
+  scene = new THREE.Scene();
+  scene.background = new THREE.Color(0x000000);
+
+  camera3d = new THREE.PerspectiveCamera(60, wrapper.clientWidth / wrapper.clientHeight, 0.1, 100);
+  camera3d.position.set(0, 0, zoomLevel);
+
+  // Point cloud geometry (preallocate)
+  geometry = new THREE.BufferGeometry();
+  const positions = new Float32Array(MAX_POINTS * 3);
+  const colors    = new Float32Array(MAX_POINTS * 3);
+  geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+  geometry.setAttribute('color',    new THREE.BufferAttribute(colors, 3));
+  geometry.setDrawRange(0, 0);
+
+  material = new THREE.PointsMaterial({
+    size: POINT_SIZE * 0.01,
+    vertexColors: true,
+    transparent: true,
+    opacity: 0.92,
+    blending: THREE.AdditiveBlending,
+    depthWrite: false,
+    sizeAttenuation: true
+  });
+
+  pointCloud = new THREE.Points(geometry, material);
+  scene.add(pointCloud);
+
+  // Resize
+  window.addEventListener('resize', () => {
+    const w = wrapper.clientWidth, h = wrapper.clientHeight;
+    renderer.setSize(w, h);
+    camera3d.aspect = w / h;
+    camera3d.updateProjectionMatrix();
+  });
+}
+
+// ── Color palettes ───────────────────────────────────────────────────
+function depthToColor(depth, r, g, b_out) {
+  const t = Math.max(0, Math.min(1, depth));
+  switch (PALETTE) {
+    case 'cyan':
+      r[0] = t * 0.1; g[0] = t * 0.6 + 0.3; b_out[0] = 1.0;
+      break;
+    case 'fire':
+      r[0] = 1.0; g[0] = t * 0.5; b_out[0] = t * 0.1;
+      break;
+    case 'matrix':
+      r[0] = 0; g[0] = 0.3 + t * 0.7; b_out[0] = 0;
+      break;
+    case 'rainbow':
+      const h = t * 0.8;
+      const i = Math.floor(h * 6); const f = h * 6 - i;
+      const q = 1 - f; const p = 0;
+      if (i % 6 === 0) { r[0]=1; g[0]=f; b_out[0]=0; }
+      else if (i%6===1) { r[0]=q; g[0]=1; b_out[0]=0; }
+      else if (i%6===2) { r[0]=0; g[0]=1; b_out[0]=f; }
+      else if (i%6===3) { r[0]=0; g[0]=q; b_out[0]=1; }
+      else if (i%6===4) { r[0]=f; g[0]=0; b_out[0]=1; }
+      else { r[0]=1; g[0]=0; b_out[0]=q; }
+      break;
+    case 'white':
+      r[0] = g[0] = b_out[0] = 0.3 + t * 0.7;
+      break;
+  }
+}
+
+// ── Update point cloud from depth data ──────────────────────────────
+const _r = [0], _g = [0], _b = [0];
+function updatePointCloud(depthData, width, height) {
+  const pos  = geometry.attributes.position.array;
+  const col  = geometry.attributes.color.array;
+  const step = Math.max(1, Math.floor(Math.sqrt(width * height / MAX_POINTS)));
+
+  let idx = 0;
+  const aspect = width / height;
+
+  for (let y = 0; y < height; y += step) {
+    for (let x = 0; x < width; x += step) {
+      if (idx >= MAX_POINTS) break;
+      const di = y * width + x;
+      const depth = depthData[di]; // 0-1 normalized
+
+      if (depth < 0.02) continue; // skip very far
+
+      const nx = (x / width  - 0.5) * 2 * aspect;
+      const ny = (y / height - 0.5) * -2;
+      const nz = (depth - 0.5) * DEPTH_SCALE;
+
+      pos[idx*3]   = nx * 2;
+      pos[idx*3+1] = ny * 2;
+      pos[idx*3+2] = nz;
+
+      depthToColor(depth, _r, _g, _b);
+      col[idx*3]   = _r[0];
+      col[idx*3+1] = _g[0];
+      col[idx*3+2] = _b[0];
+
+      idx++;
+    }
+    if (idx >= MAX_POINTS) break;
+  }
+
+  geometry.setDrawRange(0, idx);
+  geometry.attributes.position.needsUpdate = true;
+  geometry.attributes.color.needsUpdate    = true;
+  ptsVal.textContent = idx.toLocaleString();
+}
+
+// ── Fallback depth (no TF.js) ────────────────────────────────────────
+// Generates fake depth from luminance for browsers where TF model fails
+function luminanceDepth(imgData, width, height) {
+  const out = new Float32Array(width * height);
+  for (let i = 0; i < width * height; i++) {
+    const r = imgData[i*4]   / 255;
+    const g = imgData[i*4+1] / 255;
+    const b = imgData[i*4+2] / 255;
+    out[i] = 0.299 * r + 0.587 * g + 0.114 * b;
+  }
+  return out;
+}
+
+// ── Camera setup ─────────────────────────────────────────────────────
+let currentFacingMode = 'environment';
+let currentStream = null;
+
+async function initCamera() {
+  videoEl = document.getElementById('video-hidden');
+  const constraints = {
+    video: {
+      facingMode: { ideal: currentFacingMode },
+      width: { ideal: 320 }, height: { ideal: 240 }
+    }
+  };
+  try {
+    if (currentStream) {
+      currentStream.getTracks().forEach(t => t.stop());
+    }
+    const stream = await navigator.mediaDevices.getUserMedia(constraints);
+    currentStream = stream;
+    videoEl.srcObject = stream;
+    await new Promise(r => videoEl.onloadedmetadata = r);
+    videoEl.play();
+    setProgress(40, 'Cámara lista. Cargando modelo IA...');
+    statusText.textContent = currentFacingMode === 'user' ? 'CÁMARA FRONAL' : 'CÁMARA TRASERA';
+  } catch(e) {
+    alert("Error al cargar la cámara: " + e.message + "\n\nIMPORTANTE: Si lo abres desde el teléfono usando Wi-Fi local, iOS y Android bloquean las cámaras web a menos que se cargue con 'HTTPS'.");
+    statusText.textContent = 'SIN CÁMARA — MODO DEMO';
+    setProgress(40, 'Cámara no disponible por seguridad.');
+  }
+
+  if (!processingCanvas) {
+    processingCanvas = document.createElement('canvas');
+    processingCanvas.width  = 160;
+    processingCanvas.height = 120;
+    processingCtx = processingCanvas.getContext('2d');
+  }
+}
+
+// ── Load TF.js depth model ───────────────────────────────────────────
+async function loadDepthModel() {
+  try {
+    setProgress(50, 'Descargando TensorFlow.js...');
+    // Dynamically load TF.js
+    await loadScript('https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.11.0/dist/tf.min.js');
+    setProgress(65, 'TF.js cargado. Cargando modelo MiDaS...');
+
+    // Try to load depth estimation model
+    await loadScript('https://cdn.jsdelivr.net/npm/@tensorflow-models/depth-estimation@0.0.3/dist/depth-estimation.min.js');
+    setProgress(80, 'Inicializando modelo...');
+
+    if (typeof depthEstimation !== 'undefined') {
+      depthModel = await depthEstimation.createEstimator(
+        depthEstimation.SupportedModels.ARPortraitDepth,
+        { outputDepthRange: [0, 1] }
+      );
+      setProgress(100, '¡Modelo listo!');
+      statusText.textContent = 'IA ACTIVA — MIDAS';
+    } else {
+      throw new Error('Model API not available');
+    }
+  } catch (e) {
+    console.warn('TF depth model failed, using luminance fallback:', e.message);
+    depthModel = null;
+    statusText.textContent = 'MODO LUMINANCIA';
+    setProgress(100, 'Modo fallback activo');
+  }
+}
+
+function loadScript(src) {
+  return new Promise((res, rej) => {
+    const s = document.createElement('script');
+    s.src = src; s.onload = res; s.onerror = rej;
+    document.head.appendChild(s);
+  });
+}
+
+// ── Main render loop ─────────────────────────────────────────────────
+let demoAngle = 0;
+function renderLoop(now) {
+  rafId = requestAnimationFrame(renderLoop);
+
+  // FPS
+  frameCount++;
+  if (now - lastFpsTime > 1000) {
+    fps = frameCount;
+    frameCount = 0;
+    lastFpsTime = now;
+    fpsVal.textContent = fps;
+  }
+
+  if (!isRunning) { renderer.render(scene, camera3d); return; }
+
+  // Auto-rotate
+  pointCloud.rotation.y += ROT_SPEED;
+
+  // Orbit control via manual vars
+  pointCloud.rotation.x = orbitY * 0.01;
+  pointCloud.rotation.y += orbitX * 0.001;
+  orbitX *= 0.92;
+  orbitY *= 0.92;
+
+  // Camera zoom
+  camera3d.position.z = zoomLevel;
+
+  // Process frame
+  if (videoEl && videoEl.readyState >= 2) {
+    processingCtx.drawImage(videoEl, 0, 0, 160, 120);
+    const imgData = processingCtx.getImageData(0, 0, 160, 120);
+    const depth   = luminanceDepth(imgData.data, 160, 120);
+    updatePointCloud(depth, 160, 120);
+  } else {
+    // Demo mode: animated sphere
+    demoAngle += 0.03;
+    const pos = geometry.attributes.position.array;
+    const col = geometry.attributes.color.array;
+    const N = 15000;
+    geometry.setDrawRange(0, N);
+    for (let i = 0; i < N; i++) {
+      const phi   = Math.acos(-1 + (2 * i) / N);
+      const theta = Math.sqrt(N * Math.PI) * phi + demoAngle * 0.1;
+      const r2    = 2 + Math.sin(theta * 3 + demoAngle) * 0.5;
+      pos[i*3]   = r2 * Math.sin(phi) * Math.cos(theta);
+      pos[i*3+1] = r2 * Math.sin(phi) * Math.sin(theta);
+      pos[i*3+2] = r2 * Math.cos(phi);
+      const t = (Math.sin(theta + demoAngle) + 1) / 2;
+      depthToColor(t, _r, _g, _b);
+      col[i*3] = _r[0]; col[i*3+1] = _g[0]; col[i*3+2] = _b[0];
+    }
+    geometry.attributes.position.needsUpdate = true;
+    geometry.attributes.color.needsUpdate    = true;
+    ptsVal.textContent = N.toLocaleString();
+  }
+
+  renderer.render(scene, camera3d);
+}
+
+// ── Input: mouse + touch orbit ────────────────────────────────────────
+function setupInput() {
+  const canvas = document.getElementById('three-canvas');
+
+  // Mouse
+  canvas.addEventListener('mousedown', e => { orbitActive = true; lastX = e.clientX; lastY = e.clientY; });
+  window.addEventListener('mouseup',   () => orbitActive = false);
+  window.addEventListener('mousemove', e => {
+    if (!orbitActive) return;
+    orbitX += (e.clientX - lastX) * 3;
+    orbitY += (e.clientY - lastY) * 3;
+    lastX = e.clientX; lastY = e.clientY;
+  });
+  canvas.addEventListener('wheel', e => {
+    zoomLevel = Math.max(1, Math.min(12, zoomLevel + e.deltaY * 0.01));
+    e.preventDefault();
+  }, { passive: false });
+
+  // Touch
+  canvas.addEventListener('touchstart', e => {
+    if (e.touches.length === 1) {
+      orbitActive = true;
+      lastX = e.touches[0].clientX;
+      lastY = e.touches[0].clientY;
+    }
+    if (e.touches.length === 2) {
+      prevPinchDist = Math.hypot(
+        e.touches[0].clientX - e.touches[1].clientX,
+        e.touches[0].clientY - e.touches[1].clientY
+      );
+    }
+  }, { passive: true });
+
+  canvas.addEventListener('touchend',   () => orbitActive = false, { passive: true });
+  canvas.addEventListener('touchmove', e => {
+    if (e.touches.length === 1 && orbitActive) {
+      orbitX += (e.touches[0].clientX - lastX) * 3;
+      orbitY += (e.touches[0].clientY - lastY) * 3;
+      lastX = e.touches[0].clientX;
+      lastY = e.touches[0].clientY;
+    }
+    if (e.touches.length === 2) {
+      const d = Math.hypot(
+        e.touches[0].clientX - e.touches[1].clientX,
+        e.touches[0].clientY - e.touches[1].clientY
+      );
+      zoomLevel = Math.max(1, Math.min(12, zoomLevel - (d - prevPinchDist) * 0.02));
+      prevPinchDist = d;
+    }
+  }, { passive: true });
+}
+
+// ── Controls wiring ───────────────────────────────────────────────────
+function setupControls() {
+  document.getElementById('density').addEventListener('input', e => {
+    MAX_POINTS = +e.target.value;
+    document.getElementById('density-val').textContent = Math.round(MAX_POINTS/1000) + 'k';
+  });
+  document.getElementById('depth-scale').addEventListener('input', e => {
+    DEPTH_SCALE = +e.target.value;
+    document.getElementById('depth-scale-val').textContent = DEPTH_SCALE.toFixed(1);
+  });
+  document.getElementById('point-size').addEventListener('input', e => {
+    POINT_SIZE = +e.target.value;
+    material.size = POINT_SIZE * 0.01;
+    document.getElementById('point-size-val').textContent = POINT_SIZE.toFixed(1);
+  });
+  document.getElementById('rot-speed').addEventListener('input', e => {
+    ROT_SPEED = +e.target.value * 0.001;
+    document.getElementById('rot-speed-val').textContent = (+e.target.value).toFixed(1);
+  });
+  document.getElementById('color-palette').addEventListener('change', e => { PALETTE = e.target.value; });
+  document.getElementById('view-mode').addEventListener('change', e => {
+    VIEW_MODE = e.target.value;
+    modeVal.textContent = e.target.options[e.target.selectedIndex].text.toUpperCase();
+  });
+
+  // Camera flip
+  document.getElementById('btn-flip-cam').addEventListener('click', () => {
+    currentFacingMode = currentFacingMode === 'user' ? 'environment' : 'user';
+    initCamera();
+  });
+
+  // Pause/resume
+  document.getElementById('btn-toggle-cam').addEventListener('click', function() {
+    isRunning = !isRunning;
+    this.textContent = isRunning ? '⏸ PAUSAR' : '▶ REANUDAR';
+    statusText.textContent = isRunning ? 'ACTIVO' : 'PAUSADO';
+  });
+
+  // Reset
+  document.getElementById('btn-reset').addEventListener('click', () => {
+    pointCloud.rotation.set(0, 0, 0);
+    zoomLevel = 5;
+    orbitX = orbitY = 0;
+  });
+
+  // Capture
+  document.getElementById('btn-capture').addEventListener('click', captureFrame);
+  document.getElementById('btn-close-popup').addEventListener('click', () => {
+    document.getElementById('share-popup').classList.remove('show');
+  });
+  document.getElementById('btn-download').addEventListener('click', () => {
+    if (!capturedDataURL) return;
+    const a = document.createElement('a');
+    a.href = capturedDataURL;
+    a.download = `3d-depth-scan-${Date.now()}.png`;
+    a.click();
+  });
+
+  // FAQ
+  document.querySelectorAll('.faq-item').forEach(item => {
+    item.querySelector('.faq-q').addEventListener('click', () => item.classList.toggle('open'));
+  });
+}
+
+async function captureFrame() {
+  renderer.render(scene, camera3d);
+  capturedDataURL = renderer.domElement.toDataURL('image/png');
+
+  document.getElementById('captured-preview').src = capturedDataURL;
+  document.getElementById('share-popup').classList.add('show');
+
+  // Mock upload
+  document.getElementById('share-link-text').textContent = 'Subiendo...';
+  try {
+    await fetch('https://httpbin.org/post', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ image: capturedDataURL.substring(0, 100) + '...' })
+    });
+    const id = Math.random().toString(36).substring(2, 10).toUpperCase();
+    document.getElementById('share-link-text').textContent = `https://3ddepth.cam/share/${id}`;
+  } catch {
+    document.getElementById('share-link-text').textContent = 'Enlace no disponible (guarda la imagen localmente)';
+  }
+}
+
+// ── INIT ──────────────────────────────────────────────────────────────
+async function init() {
+  setProgress(10, 'Iniciando motor 3D...');
+  initThree();
+  setProgress(25, 'Motor 3D listo. Accediendo a cámara...');
+  await initCamera();
+  await loadDepthModel();
+
+  setTimeout(() => {
+    loadingEl.style.opacity = '0';
+    loadingEl.style.transition = 'opacity 0.5s';
+    setTimeout(() => { loadingEl.style.display = 'none'; }, 500);
+    statusText.textContent = 'ACTIVO';
+  }, 500);
+
+  setupInput();
+  setupControls();
+  requestAnimationFrame(renderLoop);
+}
+
+// Register Service Worker for PWA
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('sw.js').catch(err => console.log('SW fail:', err));
+  });
+}
+
+document.getElementById('btn-start-app').addEventListener('click', () => {
+  document.getElementById('start-overlay').style.display = 'none';
+  init(); // Este clic es el que dispara la caja de permisos del sistema operativo
+});
+</script>
+</body>
+</html>

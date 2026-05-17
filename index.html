@@ -286,7 +286,10 @@
       <button class="btn" id="btn-flip-cam">🔄 CÁMARA</button>
       <button class="btn" id="btn-toggle-cam">⏸ PAUSAR</button>
       <button class="btn primary" id="btn-capture">📷 CAPTURAR</button>
-      <button class="btn" id="btn-reset">↺ RESET</button>
+      <button class="btn" id="btn-save-map" style="background:rgba(0,245,255,0.4)">💾 GUARDAR</button>
+      <button class="btn" id="btn-load-map">📂 CARGAR</button>
+      <button class="btn" id="btn-clear-map">🗑 LIMPIAR</button>
+      <button class="btn" id="btn-reset">↺ CENTRAR CÁMARA</button>
     </div>
   </div>
 
@@ -418,13 +421,17 @@
 // ═══════════════════════════════════════════════════════════════════
 
 // ── Config ──────────────────────────────────────────────────────────
-let MAX_POINTS  = 20000;
+let MAX_POINTS = 400000; // expanded limit
 let DEPTH_SCALE = 2.0;
 let POINT_SIZE  = 2.0;
 let ROT_SPEED   = 0.003;
 let PALETTE     = 'cyan';
 let VIEW_MODE   = '3d';
 let isRunning   = true;
+// SLAM State
+let globalIdx = 0;
+let mapQuat = new THREE.Quaternion();
+let isMapping = true;
 
 // ── State ────────────────────────────────────────────────────────────
 let camera3d, scene, renderer, pointCloud, geometry, material;
@@ -526,43 +533,53 @@ function depthToColor(depth, r, g, b_out) {
 // ── Update point cloud from depth data ──────────────────────────────
 const _r = [0], _g = [0], _b = [0];
 function updatePointCloud(depthData, width, height) {
+  if (!isMapping) return;
   const pos  = geometry.attributes.position.array;
   const col  = geometry.attributes.color.array;
-  const step = Math.max(1, Math.floor(Math.sqrt(width * height / MAX_POINTS)));
-
-  let idx = 0;
+  
+  // Muestreo dinámico para no trabar celulares
+  const sampleRate = Math.max(1, Math.floor(width * height / 3000)); 
   const aspect = width / height;
 
-  for (let y = 0; y < height; y += step) {
-    for (let x = 0; x < width; x += step) {
-      if (idx >= MAX_POINTS) break;
-      const di = y * width + x;
-      const depth = depthData[di]; // 0-1 normalized
+  let added = 0;
+  for (let i = 0; i < depthData.length; i += sampleRate) {
+      if (globalIdx >= MAX_POINTS) {
+         isMapping = false;
+         statusText.textContent = "🗺️ MAPA LLENO. EXPANDE EL LIMITE.";
+         break;
+      }
 
-      if (depth < 0.02) continue; // skip very far
+      const depth = depthData[i]; 
+      if (depth < 0.05) continue; // Fondo lejano
 
+      const x = i % width;
+      const y = Math.floor(i / width);
+      // Coordenadas locales
       const nx = (x / width  - 0.5) * 2 * aspect;
       const ny = (y / height - 0.5) * -2;
       const nz = (depth - 0.5) * DEPTH_SCALE;
+      
+      const v = new THREE.Vector3(nx * 2, ny * 2, nz);
+      // Acumulación inercial en el mundo
+      v.applyQuaternion(mapQuat);
 
-      pos[idx*3]   = nx * 2;
-      pos[idx*3+1] = ny * 2;
-      pos[idx*3+2] = nz;
+      pos[globalIdx*3]   = v.x;
+      pos[globalIdx*3+1] = v.y;
+      pos[globalIdx*3+2] = v.z;
 
       depthToColor(depth, _r, _g, _b);
-      col[idx*3]   = _r[0];
-      col[idx*3+1] = _g[0];
-      col[idx*3+2] = _b[0];
+      col[globalIdx*3]   = _r[0];
+      col[globalIdx*3+1] = _g[0];
+      col[globalIdx*3+2] = _b[0];
 
-      idx++;
-    }
-    if (idx >= MAX_POINTS) break;
+      globalIdx++;
+      added++;
   }
 
-  geometry.setDrawRange(0, idx);
+  geometry.setDrawRange(0, globalIdx);
   geometry.attributes.position.needsUpdate = true;
   geometry.attributes.color.needsUpdate    = true;
-  ptsVal.textContent = idx.toLocaleString();
+  ptsVal.textContent = globalIdx.toLocaleString();
 }
 
 // ── Fallback depth (no TF.js) ────────────────────────────────────────
@@ -715,6 +732,15 @@ function renderLoop(now) {
 
 // ── Input: mouse + touch orbit ────────────────────────────────────────
 function setupInput() {
+  window.addEventListener('deviceorientation', e => {
+     if(!e.alpha) return;
+     const alpha = e.alpha ? THREE.MathUtils.degToRad(e.alpha) : 0;
+     const beta  = e.beta  ? THREE.MathUtils.degToRad(e.beta)  : 0;
+     const gamma = e.gamma ? THREE.MathUtils.degToRad(e.gamma) : 0;
+     const euler = new THREE.Euler(beta, alpha, -gamma, 'YXZ');
+     mapQuat.setFromEuler(euler);
+  });
+
   const canvas = document.getElementById('three-canvas');
 
   // Mouse
@@ -804,6 +830,49 @@ function setupControls() {
   });
 
   // Reset
+    const DB_NAME = '3DCameraMapDB';
+  document.getElementById('btn-clear-map').addEventListener('click', () => {
+     globalIdx = 0;
+     isMapping = true;
+     geometry.setDrawRange(0, 0);
+     ptsVal.textContent = "0";
+  });
+  document.getElementById('btn-save-map').addEventListener('click', () => {
+    statusText.textContent = "GUARDANDO EN TELÉFONO...";
+    const pos = new Float32Array(geometry.attributes.position.array.buffer).slice(0, globalIdx * 3);
+    const col = new Float32Array(geometry.attributes.color.array.buffer).slice(0, globalIdx * 3);
+    const data = { id: 1, pos, col, count: globalIdx };
+    const request = indexedDB.open(DB_NAME, 1);
+    request.onupgradeneeded = e => e.target.result.createObjectStore('maps', { keyPath: 'id' });
+    request.onsuccess = e => {
+      const db = e.target.result;
+      const tx = db.transaction('maps', 'readwrite');
+      tx.objectStore('maps').put(data);
+      tx.oncomplete = () => statusText.textContent = "✅ MAPA EN DISPOSITIVO";
+    };
+  });
+  document.getElementById('btn-load-map').addEventListener('click', () => {
+    statusText.textContent = "CARGANDO MAPA...";
+    const request = indexedDB.open(DB_NAME, 1);
+    request.onsuccess = e => {
+      const db = e.target.result;
+      if (!db.objectStoreNames.contains('maps')) { statusText.textContent = "❌ NO HAY MAPA"; return; }
+      const tx = db.transaction('maps', 'readonly');
+      const getReq = tx.objectStore('maps').get(1);
+      getReq.onsuccess = () => {
+        if (!getReq.result) { statusText.textContent = "❌ NO HAY MAPA"; return; }
+        globalIdx = getReq.result.count;
+        geometry.attributes.position.array.set(getReq.result.pos);
+        geometry.attributes.color.array.set(getReq.result.col);
+        geometry.setDrawRange(0, globalIdx);
+        geometry.attributes.position.needsUpdate = true;
+        geometry.attributes.color.needsUpdate = true;
+        ptsVal.textContent = globalIdx.toLocaleString();
+        statusText.textContent = "✅ MAPA CARGADO";
+        isMapping = false; 
+      }
+    };
+  });
   document.getElementById('btn-reset').addEventListener('click', () => {
     pointCloud.rotation.set(0, 0, 0);
     zoomLevel = 5;

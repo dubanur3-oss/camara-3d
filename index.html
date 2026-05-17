@@ -424,12 +424,13 @@
 let MAX_POINTS = 400000; // expanded limit
 let DEPTH_SCALE = 2.0;
 let POINT_SIZE  = 2.0;
-let ROT_SPEED   = 0.003;
+let ROT_SPEED   = 0.0;
 let PALETTE     = 'cyan';
 let VIEW_MODE   = '3d';
 let isRunning   = true;
 // SLAM State
 let globalIdx = 0;
+let maxPointsDrawn = 0;
 let mapQuat = new THREE.Quaternion();
 let isMapping = true;
 
@@ -477,6 +478,7 @@ function initThree() {
   geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
   geometry.setAttribute('color',    new THREE.BufferAttribute(colors, 3));
   geometry.setDrawRange(0, 0);
+     maxPointsDrawn = 0;
 
   material = new THREE.PointsMaterial({
     size: POINT_SIZE * 0.01,
@@ -537,49 +539,46 @@ function updatePointCloud(depthData, width, height) {
   const pos  = geometry.attributes.position.array;
   const col  = geometry.attributes.color.array;
   
-  // Muestreo dinámico para no trabar celulares
+  // Aumentar la velocidad de actualización, menos lag
   const sampleRate = Math.max(1, Math.floor(width * height / 3000)); 
   const aspect = width / height;
 
-  let added = 0;
   for (let i = 0; i < depthData.length; i += sampleRate) {
-      if (globalIdx >= MAX_POINTS) {
-         isMapping = false;
-         statusText.textContent = "🗺️ MAPA LLENO. EXPANDE EL LIMITE.";
-         break;
-      }
-
       const depth = depthData[i]; 
-      if (depth < 0.05) continue; // Fondo lejano
+      if (depth < 0.05) continue; // Fondo lejano ignora
 
       const x = i % width;
       const y = Math.floor(i / width);
-      // Coordenadas locales
       const nx = (x / width  - 0.5) * 2 * aspect;
       const ny = (y / height - 0.5) * -2;
       const nz = (depth - 0.5) * DEPTH_SCALE;
       
       const v = new THREE.Vector3(nx * 2, ny * 2, nz);
-      // Acumulación inercial en el mundo
+      // Trasladar ligeramente al frente para que no colisionen con la cámara
+      v.z -= 1.0; 
+      
+      // Aplicar misma rotación del celular para anclar al mundo real
       v.applyQuaternion(mapQuat);
 
-      pos[globalIdx*3]   = v.x;
-      pos[globalIdx*3+1] = v.y;
-      pos[globalIdx*3+2] = v.z;
+      const idx = globalIdx % MAX_POINTS; // Búfer circular
+
+      pos[idx*3]   = v.x;
+      pos[idx*3+1] = v.y;
+      pos[idx*3+2] = v.z;
 
       depthToColor(depth, _r, _g, _b);
-      col[globalIdx*3]   = _r[0];
-      col[globalIdx*3+1] = _g[0];
-      col[globalIdx*3+2] = _b[0];
+      col[idx*3]   = _r[0];
+      col[idx*3+1] = _g[0];
+      col[idx*3+2] = _b[0];
 
       globalIdx++;
-      added++;
+      if (maxPointsDrawn < MAX_POINTS) maxPointsDrawn++;
   }
 
-  geometry.setDrawRange(0, globalIdx);
+  geometry.setDrawRange(0, maxPointsDrawn);
   geometry.attributes.position.needsUpdate = true;
   geometry.attributes.color.needsUpdate    = true;
-  ptsVal.textContent = globalIdx.toLocaleString();
+  ptsVal.textContent = maxPointsDrawn.toLocaleString();
 }
 
 // ── Fallback depth (no TF.js) ────────────────────────────────────────
@@ -688,6 +687,10 @@ function renderLoop(now) {
 
   // Auto-rotate
   pointCloud.rotation.y += ROT_SPEED;
+  // Sincronizar cámara virtual con el celular
+  if (isMapping) {
+    camera3d.quaternion.slerp(mapQuat, 0.4); 
+  }
 
   // Orbit control via manual vars
   pointCloud.rotation.x = orbitY * 0.01;
@@ -835,6 +838,7 @@ function setupControls() {
      globalIdx = 0;
      isMapping = true;
      geometry.setDrawRange(0, 0);
+     maxPointsDrawn = 0;
      ptsVal.textContent = "0";
   });
   document.getElementById('btn-save-map').addEventListener('click', () => {
@@ -862,6 +866,7 @@ function setupControls() {
       getReq.onsuccess = () => {
         if (!getReq.result) { statusText.textContent = "❌ NO HAY MAPA"; return; }
         globalIdx = getReq.result.count;
+        maxPointsDrawn = globalIdx;
         geometry.attributes.position.array.set(getReq.result.pos);
         geometry.attributes.color.array.set(getReq.result.col);
         geometry.setDrawRange(0, globalIdx);
